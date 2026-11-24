@@ -153,3 +153,8 @@ button.tag:hover { filter: brightness(1.2); }
 .badge { font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted, #9aa3b2); }
 .credit { margin-top: 28px; font-size: 11px; color: var(--muted, #9aa3b2); opacity: .8; }
 .credit a { color: inherit; }
+
+.lg.sel { background: var(--volt); }
+.lg.sib { background: #4aa8ff; }
+.heads + .legend { margin-top: 10px; }
+.head:not(.on) { border-left: 3px solid #4aa8ff; }

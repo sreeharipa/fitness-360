@@ -303,6 +303,66 @@ const shift = (g) => {
   return g;
 };
 shift(skinRaw);
+orient(skinRaw);
+
+// The source skin has inconsistently wound triangles. Walk the mesh across shared edges so
+// neighbours agree, then make the whole surface face outward (positive volume).
+function orient(g) {
+  const T = g.idx.length / 3;
+  const edges = new Map();
+  const ek = (a, b) => (a < b ? a * 4194304 + b : b * 4194304 + a);
+  for (let t = 0; t < T; t++) {
+    for (let k = 0; k < 3; k++) {
+      const key = ek(g.idx[t * 3 + k], g.idx[t * 3 + ((k + 1) % 3)]);
+      let l = edges.get(key);
+      if (!l) edges.set(key, (l = []));
+      l.push(t);
+    }
+  }
+  const seen = new Uint8Array(T);
+  const has = (t, a, b) => {
+    for (let k = 0; k < 3; k++) if (g.idx[t * 3 + k] === a && g.idx[t * 3 + ((k + 1) % 3)] === b) return true;
+    return false;
+  };
+  let flips = 0;
+  for (let s0 = 0; s0 < T; s0++) {
+    if (seen[s0]) continue;
+    seen[s0] = 1;
+    const stack = [s0];
+    while (stack.length) {
+      const t = stack.pop();
+      for (let k = 0; k < 3; k++) {
+        const a = g.idx[t * 3 + k];
+        const b = g.idx[t * 3 + ((k + 1) % 3)];
+        for (const u of edges.get(ek(a, b))) {
+          if (seen[u]) continue;
+          seen[u] = 1;
+          if (has(u, a, b)) {
+            const tmp = g.idx[u * 3 + 1];
+            g.idx[u * 3 + 1] = g.idx[u * 3 + 2];
+            g.idx[u * 3 + 2] = tmp;
+            flips++;
+          }
+          stack.push(u);
+        }
+      }
+    }
+  }
+  let vol = 0;
+  const P = (i) => [g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]];
+  for (let t = 0; t < T; t++) {
+    const [a, b, c] = [P(g.idx[t * 3]), P(g.idx[t * 3 + 1]), P(g.idx[t * 3 + 2])];
+    vol += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+  }
+  if (vol < 0) {
+    for (let t = 0; t < T; t++) {
+      const tmp = g.idx[t * 3 + 1];
+      g.idx[t * 3 + 1] = g.idx[t * 3 + 2];
+      g.idx[t * 3 + 2] = tmp;
+    }
+  }
+  console.log(`skin: re-oriented ${flips} of ${T} triangles${vol < 0 ? ' (then flipped all)' : ''}`);
+}
 
 for (const [group, key, label, src, region] of M) {
   const g = shift(load(src));
@@ -329,14 +389,32 @@ for (const [src, region, mid] of BONES) {
   add({ kind: 'bone', id: src.replace(/^Right /, '').replace(/\s+/g, '_').toLowerCase(), region, mirror: !mid }, simplify(g, 0.25, 0.003));
 }
 
-// skin: head, hands, feet only (the rest of the body is shown as muscle)
-const skinS = simplify(skinRaw, 0.25, 0.002);
-add({ kind: 'skin', id: 'head', region: 'head', mirror: false }, crop(skinS, (x, y, z) => y > 1.505 + (z > 0.05 ? -0.01 : 0.03) - Math.max(0, z - 0.02) * 0.6));
-add({ kind: 'skin', id: 'hands', region: 'hand', mirror: false }, crop(skinS, (x, y, z) => y < 0.885 && Math.abs(x) > 0.2));
-add({ kind: 'skin', id: 'feet', region: 'foot', mirror: false }, crop(skinS, (x, y, z) => y < 0.1));
+// skin, split into pieces. Each piece is simplified on its own with its border locked, so the
+// seams still line up when all four are shown together (exercise demos). The explore view
+// shows only head/hands/feet over the muscles. The face keeps more detail.
+const isHead = (x, y, z) => y > 1.505 + (z > 0.05 ? -0.01 : 0.03) - Math.max(0, z - 0.02) * 0.6;
+const isHand = (x, y) => y < 0.885 && Math.abs(x) > 0.2;
+const isFoot = (x, y) => y < 0.1;
+add({ kind: 'skin', id: 'head', region: 'head', mirror: false }, simplify(crop(skinRaw, isHead), 0.6, 0.0005));
+add({ kind: 'skin', id: 'hands', region: 'hand', mirror: false }, simplify(crop(skinRaw, isHand), 0.4, 0.001));
+add({ kind: 'skin', id: 'feet', region: 'foot', mirror: false }, simplify(crop(skinRaw, isFoot), 0.3, 0.001));
+add(
+  { kind: 'skin', id: 'body', region: 'transfer', mirror: false },
+  simplify(crop(skinRaw, (x, y, z) => !isHead(x, y, z) && !isHand(x, y) && !isFoot(x, y)), 0.22, 0.002),
+);
 
-// raw skin (full) kept for synthesizing rectus abdominis and lats at runtime: store a cropped torso shell
-add({ kind: 'shell', id: 'torso', region: 'trunk', mirror: false }, crop(skinS, (x, y, z) => y > 0.85 && y < 1.4 && Math.abs(x) < 0.2));
+// face details
+for (const [src, id] of [
+  ['Left sclera', 'sclera'],
+  ['Right sclera', 'sclera'],
+  ['Left iris', 'iris'],
+  ['Right iris', 'iris'],
+  ['Eyebrow', 'brow'],
+  ['Hair of head', 'hair'],
+  ['Lip', 'lip'],
+]) {
+  add({ kind: 'face', id, region: 'head', mirror: false }, simplify(shift(load(src)), { sclera: 0.06, iris: 0.2 }[id] || 0.35, 0.001));
+}
 
 // ------------------------------------------------------------------ joints (from bones, before simplification is fine)
 function pts(name) {

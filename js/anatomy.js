@@ -38,11 +38,51 @@ export function anatomyDims({ manifest }) {
 }
 
 // ------------------------------------------------------------------ colours
+const FACE = {
+  sclera: new THREE.Color(0xe8e2da),
+  iris: new THREE.Color(0x3a2a22),
+  brow: new THREE.Color(0x2a211c),
+  hair: new THREE.Color(0x231b16),
+  lip: new THREE.Color(0xb98272),
+};
+
+// MeshStandardMaterial with a per-vertex `glow` attribute: highlighted muscles emit a bit of
+// their own colour so they stay bright in shadow.
+function glowMaterial(params, shorts) {
+  const m = new THREE.MeshStandardMaterial(params);
+  // the two variants share this function's source, so give them distinct program keys
+  m.customProgramCacheKey = () => (shorts ? 'glow-shorts' : 'glow');
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vGlow;' + (shorts ? '\nattribute vec3 bindPos;\nvarying vec3 vBind;' : ''))
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = glow;' + (shorts ? '\nvBind = bindPos;' : ''));
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vGlow;' + (shorts ? '\nvarying vec3 vBind;\n' + shorts : ''))
+      .replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>' + (shorts ? '\nfloat sm = shortsMask(vBind);\ndiffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.024, 0.03, 0.045), diffuseColor.rgb, min(1.0, vGlow * 3.0) * 0.8), sm);' : ''),
+      )
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * vGlow;');
+  };
+  return m;
+}
+
+// fitted shorts: waist to mid-thigh, in rest-pose (bind) coordinates
+const SHORTS_GLSL = `
+float shortsMask(vec3 p) {
+  float ax = abs(p.x);
+  float top = 1.001 - 0.011 * tanh(p.z * 30.0);
+  float bot = 0.69 + max(0.0, ax - 0.1) * 0.25;
+  float e = 0.0015;
+  return smoothstep(top + e, top - e, p.y) * smoothstep(bot - e, bot + e, p.y) * smoothstep(0.2, 0.19, ax);
+}`;
+
 export const TONES = {
   muscle: new THREE.Color(0xa8443c),
   fill: new THREE.Color(0x7c4440),
   bone: new THREE.Color(0xd9cfbd),
-  skin: new THREE.Color(0xc99a82),
+  skin: new THREE.Color(0xc49a84),
+  shorts: new THREE.Color(0x2b3140),
 };
 
 // Bone segments used for skin weights. Each maps to the rig joint that moves it.
@@ -131,9 +171,62 @@ const smooth = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
+const _tw = new THREE.Matrix4();
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _p = new THREE.Vector3();
+// Laplacian smoothing of skin weights over the mesh (keeps the 4 largest per vertex).
+function smoothWeights(si, sw, idx, nv, nb, iters, pinned) {
+  let W = new Float32Array(nv * nb);
+  for (let i = 0; i < nv; i++) for (let k = 0; k < 4; k++) W[i * nb + si[i * 4 + k]] += sw[i * 4 + k];
+  const W0 = W.slice();
+  const adj = Array.from({ length: nv }, () => new Set());
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i];
+    const b = idx[i + 1];
+    const c = idx[i + 2];
+    adj[a].add(b).add(c);
+    adj[b].add(a).add(c);
+    adj[c].add(a).add(b);
+  }
+  const nbr = adj.map((x) => [...x]);
+  for (let it = 0; it < iters; it++) {
+    const N = new Float32Array(W.length);
+    for (let i = 0; i < nv; i++) {
+      const o = i * nb;
+      const list = nbr[i];
+      if (pinned && pinned[i]) {
+        for (let b = 0; b < nb; b++) N[o + b] = W0[o + b];
+        continue;
+      }
+      for (let b = 0; b < nb; b++) {
+        let acc = W[o + b];
+        for (const j of list) acc += W[j * nb + b];
+        N[o + b] = acc / (list.length + 1);
+      }
+    }
+    W = N;
+  }
+  for (let i = 0; i < nv; i++) {
+    const o = i * nb;
+    const order = [];
+    for (let b = 0; b < nb; b++) if (W[o + b] > 1e-4) order.push([b, W[o + b]]);
+    order.sort((x, y) => y[1] - x[1]);
+    const top = order.slice(0, 4);
+    const sum = top.reduce((t, e) => t + e[1], 0) || 1;
+    for (let k = 0; k < 4; k++) {
+      si[i * 4 + k] = top[k] ? top[k][0] : 0;
+      sw[i * 4 + k] = top[k] ? top[k][1] / sum : 0;
+    }
+  }
+}
+
+function segT(p, s) {
+  _a.fromArray(s.a);
+  _b.fromArray(s.b);
+  const ab = _b.sub(_a);
+  return Math.min(1, Math.max(0, _p.copy(p).sub(_a).dot(ab) / ab.lengthSq()));
+}
 function segDist(p, s) {
   _a.fromArray(s.a);
   _b.fromArray(s.b);
@@ -165,6 +258,19 @@ function cropTris(g, keep) {
     if (keep((pos[a] + pos[b] + pos[c]) / 3, (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3, (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3)) out.push(idx[i], idx[i + 1], idx[i + 2]);
   }
   return { pos, idx: new Uint32Array(out) };
+}
+
+// The source body is anatomically complete; flatten the groin to a smooth surface (it is
+// covered by painted-on shorts in the demos).
+function modesty(pos) {
+  for (let i = 0; i < pos.length; i += 3) {
+    const ax = Math.abs(pos[i]);
+    const y = pos[i + 1];
+    if (ax > 0.08 || y < 0.72 || y > 0.935 || pos[i + 2] < 0) continue;
+    const cap = Math.max(0.02, 0.1 - Math.max(0, 0.93 - y) * 0.5) - Math.max(0, ax - 0.04) * 0.15;
+    const w = smooth(0.08, 0.06, ax);
+    if (pos[i + 2] > cap) pos[i + 2] = pos[i + 2] + (cap - pos[i + 2]) * w;
+  }
 }
 
 // The skin is a closed shell with an outer and an inner surface; keep only triangles facing
@@ -383,7 +489,7 @@ export class Body {
     this.rig.group.updateMatrixWorld(true);
     const segs = segments(d, this.rig);
 
-    const buckets = { muscle: [], bone: [], skin: [] };
+    const buckets = { muscle: [], bone: [], skin: [], skinBody: [] };
     const addPart = (bucket, g, info) => {
       const pi = this.parts.length;
       this.parts.push(info);
@@ -397,11 +503,6 @@ export class Body {
     let torso = null;
     for (const e of manifest.parts) {
       const base = decode(this.data, e);
-      if (e.kind === 'shell') {
-        toBody(base.pos, false);
-        torso = outerSkin(base);
-        continue;
-      }
       const sides = e.mirror ? ['R', 'L'] : ['M'];
       for (const side of sides) {
         const pos = side === 'R' || side === 'M' ? base.pos.slice() : base.pos.slice();
@@ -415,7 +516,12 @@ export class Body {
         if (e.kind === 'muscle') addPart('muscle', g, { key: e.id, group: e.group, label: e.label, kind: 'muscle', side, region: e.region });
         else if (e.kind === 'fill') addPart('muscle', g, { key: null, kind: 'fill', side, region: e.region });
         else if (e.kind === 'bone') addPart('bone', g, { key: null, kind: 'bone', side, region: boneRegion(e) });
-        else if (e.kind === 'skin') addPart('skin', g, { key: null, kind: 'skin', side, region: e.region });
+        else if (e.kind === 'skin' && e.id === 'body') {
+          modesty(g.pos);
+          addPart('skinBody', g, { key: null, kind: 'skin', side, region: 'transfer' });
+          torso = outerSkin(cropTris(g, (x, y) => Math.abs(x) < 0.21 && y > 0.85 && y < 1.5));
+        } else if (e.kind === 'skin') addPart('skin', g, { key: null, kind: 'skin', side, region: e.region });
+        else if (e.kind === 'face') addPart('skin', g, { key: null, kind: 'face', face: e.id, side, region: 'head' });
       }
     }
 
@@ -479,18 +585,22 @@ export class Body {
     }
 
     // build one skinned mesh per bucket
-    const boneNames = ['root', 'spine', 'chest', 'neck', 'head', 'shL', 'elL', 'wrL', 'shR', 'elR', 'wrR', 'hipL', 'knL', 'anL', 'hipR', 'knR', 'anR'];
+    // elP* = proximal forearm: follows the elbow but only part of the forearm twist, so
+    // pronation/supination spreads along the forearm instead of wringing the elbow
+    const boneNames = ['root', 'spine', 'chest', 'neck', 'head', 'shL', 'elL', 'wrL', 'shR', 'elR', 'wrR', 'hipL', 'knL', 'anL', 'hipR', 'knR', 'anR', 'elPL', 'elPR'];
     this.boneNames = boneNames;
     const segBone = segs.map((s) => boneNames.indexOf(s.bone));
     this.skeleton = this._skeleton(boneNames);
 
     const mats = {
-      muscle: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.0 }),
+      muscle: glowMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.0 }),
       bone: new THREE.MeshStandardMaterial({ color: TONES.bone, roughness: 0.7 }),
-      skin: new THREE.MeshStandardMaterial({ color: TONES.skin, roughness: 0.62 }),
+      skin: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }),
+      skinBody: glowMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.0 }, SHORTS_GLSL),
     };
     this.mats = mats;
 
+    const built = {};
     for (const [bucket, list] of Object.entries(buckets)) {
       if (!list.length) continue;
       let nv = 0;
@@ -518,6 +628,11 @@ export class Body {
         nrm.set(tmp.attributes.normal.array, ov * 3);
         for (let i = 0; i < g.idx.length; i++) idx[oi + i] = g.idx[i] + ov;
         part.fill(pi, ov, ov + n);
+        if (region === 'transfer') {
+          ov += n;
+          oi += g.idx.length;
+          continue;
+        }
         const allowed = REGION[region] || REGION.trunk;
         const cand = segs.map((s, k) => (allowed.includes(s.tag) ? k : -1)).filter((k) => k >= 0);
         const rigid = region.startsWith('rigid:');
@@ -542,18 +657,55 @@ export class Body {
             for (const w of ws) if (segs[w[0]].tag !== 'upperarm') tsum += w[1];
             for (const w of ws) w[1] = segs[w[0]].tag === 'upperarm' ? wArm : ((1 - wArm) * w[1]) / (tsum || 1);
           }
-          ws.sort((a, b) => b[1] - a[1]);
-          const top = rigid ? ws.slice(0, 1) : ws.slice(0, 4);
+          // segment weights -> bone weights (the forearm splits into proximal/distal)
+          const bw = new Map();
+          const addW = (b, w) => bw.set(b, (bw.get(b) || 0) + w);
+          for (const [k, w] of ws) {
+            const sg = segs[k];
+            if (sg.tag === 'forearm') {
+              const t = segT(v, sg);
+              const wd = smooth(0.05, 0.95, t);
+              addW(boneNames.indexOf('elP' + sg.side), w * (1 - wd));
+              addW(segBone[k], w * wd);
+            } else addW(segBone[k], w);
+          }
+          const top = [...bw.entries()].sort((a, b) => b[1] - a[1]).slice(0, rigid ? 2 : 4);
           const sum = top.reduce((s, w) => s + w[1], 0) || 1;
           for (let k = 0; k < 4; k++) {
             const w = top[k];
-            si[(ov + i) * 4 + k] = w ? segBone[w[0]] : 0;
+            si[(ov + i) * 4 + k] = w ? w[0] : 0;
             sw[(ov + i) * 4 + k] = w ? w[1] / sum : 0;
           }
         }
         ov += n;
         oi += g.idx.length;
       }
+      if (bucket === 'skinBody') {
+        this._transfer(pos, si, sw, part, built);
+        // vertices on the cut to the head/hands/feet pieces take those pieces' weights,
+        // so the seams never open
+        const pinned = new Uint8Array(nv);
+        const sk = built.skin;
+        if (sk) {
+          const key = (x, y, z) => `${Math.round(x * 2e4)},${Math.round(y * 2e4)},${Math.round(z * 2e4)}`;
+          const at = new Map();
+          for (let i = 0; i < sk.pos.length / 3; i++) {
+            if (this.parts[sk.part[i]].kind !== 'skin') continue;
+            at.set(key(sk.pos[i * 3], sk.pos[i * 3 + 1], sk.pos[i * 3 + 2]), i);
+          }
+          for (let i = 0; i < nv; i++) {
+            const j = at.get(key(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]));
+            if (j === undefined) continue;
+            pinned[i] = 1;
+            for (let k = 0; k < 4; k++) {
+              si[i * 4 + k] = sk.si[j * 4 + k];
+              sw[i * 4 + k] = sk.sw[j * 4 + k];
+            }
+          }
+        }
+        smoothWeights(si, sw, idx, nv, boneNames.length, 6, pinned);
+      }
+      built[bucket] = { pos, si, sw, part };
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
@@ -561,11 +713,24 @@ export class Body {
       geo.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
       geo.setIndex(new THREE.BufferAttribute(idx, 1));
       geo.userData.part = part;
-      if (bucket === 'muscle') {
+      if (bucket === 'skin') {
+        const c = new Float32Array(nv * 3);
+        for (let i = 0; i < nv; i++) {
+          const p = this.parts[part[i]];
+          const t = p.kind === 'face' ? FACE[p.face] || TONES.skin : TONES.skin;
+          c[i * 3] = t.r;
+          c[i * 3 + 1] = t.g;
+          c[i * 3 + 2] = t.b;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      }
+      if (bucket === 'muscle' || bucket === 'skinBody') {
         geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
+        geo.setAttribute('glow', new THREE.BufferAttribute(new Float32Array(nv), 1));
+        // skin body: `part` holds the muscle under each skin vertex (0xffff = none)
         const pc = new Float32Array(nv * 3); // pick colours: part index + 1 encoded in RGB
         for (let i = 0; i < nv; i++) {
-          const id = part[i] + 1;
+          const id = part[i] === 0xffff ? 0 : part[i] + 1;
           pc[i * 3] = (id & 255) / 255;
           pc[i * 3 + 1] = ((id >> 8) & 255) / 255;
           pc[i * 3 + 2] = 0;
@@ -580,8 +745,32 @@ export class Body {
       mesh.userData.bucket = bucket;
       this.group.add(mesh);
       this.meshes.push(mesh);
+      if (bucket === 'skin') {
+        this.skinPartsMesh = mesh;
+        this._fist(geo, part);
+        mesh.updateMorphTargets();
+      }
       if (bucket === 'muscle') this.muscleMesh = mesh;
+      if (bucket === 'skinBody') {
+        this.skinMesh = mesh;
+        // the flattened groin has crumpled triangles; give it smooth normals
+        for (let i = 0; i < nv; i++) {
+          const ax = Math.abs(pos[i * 3]);
+          const y = pos[i * 3 + 1];
+          if (pos[i * 3 + 2] < 0) continue;
+          const w = smooth(0.085, 0.05, ax) * smooth(0.7, 0.75, y) * smooth(0.95, 0.91, y);
+          if (w <= 0) continue;
+          const tx = pos[i * 3] * 4;
+          const ty = 0.35 - (0.93 - y) * 2.5;
+          const tl = Math.hypot(tx, ty, 1);
+          for (let k = 0; k < 3; k++) nrm[i * 3 + k] += ([tx, ty, 1][k] / tl - nrm[i * 3 + k]) * w;
+        }
+        // rest-pose position, used by the shader to draw the shorts with a clean edge
+        geo.setAttribute('bindPos', new THREE.BufferAttribute(pos.slice(), 3));
+      }
+      if (bucket === 'bone') this.boneMesh = mesh;
     }
+    this.setMode('explore');
     // slight per-muscle tone variation so neighbouring muscles read as separate shapes
     this.tones = this.parts.map((p, i) => {
       const base = p.kind === 'fill' ? TONES.fill : TONES.muscle;
@@ -589,6 +778,158 @@ export class Body {
       return base.clone().offsetHSL((h - 0.5) * 0.018, 0, (h - 0.5) * 0.07);
     });
     this.paint(() => null);
+  }
+
+  // Skin of the torso/limbs: copy skin weights from the nearest muscle and bone vertices
+  // (so it moves exactly like the anatomy underneath) and remember which muscle head lies
+  // under each skin vertex, for painting worked muscles onto the skin in demos.
+  _transfer(pos, si, sw, part, built) {
+    const srcs = [built.muscle, built.bone].filter(Boolean);
+    const C = 0.025;
+    const grid = new Map();
+    const key = (x, y, z) => `${x},${y},${z}`;
+    srcs.forEach((src, s) => {
+      for (let i = 0; i < src.pos.length / 3; i++) {
+        const k = key(Math.floor(src.pos[i * 3] / C), Math.floor(src.pos[i * 3 + 1] / C), Math.floor(src.pos[i * 3 + 2] / C));
+        let cell = grid.get(k);
+        if (!cell) grid.set(k, (cell = []));
+        cell.push(s, i);
+      }
+    });
+    const n = pos.length / 3;
+    const acc = new Map();
+    const KS = 8;
+    const samples = new Uint16Array(n * KS).fill(0xffff);
+    this.skinSamples = samples;
+    this.skinKS = KS;
+    for (let i = 0; i < n; i++) {
+      const x = pos[i * 3];
+      const y = pos[i * 3 + 1];
+      const z = pos[i * 3 + 2];
+      const cx = Math.floor(x / C);
+      const cy = Math.floor(y / C);
+      const cz = Math.floor(z / C);
+      const near = []; // [d2, src, idx]
+      for (let r = 1; r <= 4 && near.length < 24; r++) {
+        near.length = 0;
+        for (let a = -r; a <= r; a++)
+          for (let b = -r; b <= r; b++)
+            for (let c = -r; c <= r; c++) {
+              const cell = grid.get(key(cx + a, cy + b, cz + c));
+              if (!cell) continue;
+              for (let k = 0; k < cell.length; k += 2) {
+                const src = srcs[cell[k]];
+                const j = cell[k + 1];
+                const dx = src.pos[j * 3] - x;
+                const dy = src.pos[j * 3 + 1] - y;
+                const dz = src.pos[j * 3 + 2] - z;
+                near.push([dx * dx + dy * dy + dz * dz, cell[k], j]);
+              }
+            }
+      }
+      near.sort((p, q) => p[0] - q[0]);
+      const k6 = near.slice(0, 6);
+      acc.clear();
+      for (const [d2, s, j] of k6) {
+        const w = 1 / (d2 + 1e-5);
+        const src = srcs[s];
+        for (let q = 0; q < 4; q++) {
+          const bw = src.sw[j * 4 + q];
+          if (bw > 0) acc.set(src.si[j * 4 + q], (acc.get(src.si[j * 4 + q]) || 0) + bw * w);
+        }
+      }
+      const top = [...acc.entries()].sort((p, q) => q[1] - p[1]).slice(0, 4);
+      const sum = top.reduce((t, e) => t + e[1], 0) || 1;
+      for (let q = 0; q < 4; q++) {
+        si[i * 4 + q] = top[q] ? top[q][0] : 0;
+        sw[i * 4 + q] = top[q] ? top[q][1] / sum : 0;
+      }
+      if (!top.length) sw[i * 4] = 1;
+      // muscle heads under this point (selectable muscles only, within 5 cm): the nearest
+      // one (for picking) plus a few samples for soft highlight blending
+      part[i] = 0xffff;
+      let c = 0;
+      for (const [d2, s, j] of near) {
+        if (d2 > 0.05 * 0.05 || c >= KS) break;
+        if (s !== 0) continue;
+        const pi = built.muscle.part[j];
+        if (!this.parts[pi].key) continue;
+        if (part[i] === 0xffff) part[i] = pi;
+        samples[i * KS + c++] = pi;
+      }
+    }
+  }
+
+  // Morph target that curls the fingers around a handle. The handle axis sits at
+  // C = knuckle + palmNormal * R; the rig's grip points are moved there so props
+  // held in the hand end up inside the fist.
+  _fist(geo, part) {
+    const j = this.dims.j;
+    const pos = geo.attributes.position.array;
+    const delta = new Float32Array(pos.length);
+    const R = 0.026;
+    const frames = {};
+    for (const S of ['L', 'R']) {
+      const m = S === 'L' ? 1 : -1;
+      const W = new THREE.Vector3(m * j.wrist[0], j.wrist[1], j.wrist[2]);
+      const K = new THREE.Vector3(m * j.knuckle[0], j.knuckle[1], j.knuckle[2]);
+      const d = K.clone().sub(W).normalize();
+      const n = new THREE.Vector3(0, 0, 1);
+      n.sub(d.clone().multiplyScalar(n.dot(d))).normalize(); // palm faces forward in the rest pose
+      const a = d.clone().cross(n); // across the knuckles (thumb side is -a on the left hand)
+      frames[S] = { K, d, n, a, m, C: K.clone().addScaledVector(n, R) };
+    }
+    this.fistFrames = frames;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < part.length; i++) {
+      if (this.parts[part[i]].region !== 'hand') continue;
+      v.fromArray(pos, i * 3);
+      const F = frames[v.x >= 0 ? 'L' : 'R'];
+      const r = v.clone().sub(F.K);
+      const s = r.dot(F.d);
+      const h = r.dot(F.n);
+      const l = r.dot(F.a) * F.m;
+      // thumb: radial side near the knuckle line; it stays put
+      if (l < -0.047 && s < 0.03) continue;
+      if (s <= -0.01) continue;
+      const fade = smooth(-0.01, 0.01, s);
+      const hc = 0.005 + 0.45 * Math.max(0, s); // finger centreline (they are already slightly bent)
+      const off = h - hc;
+      const arc = Math.max(0, s) * 1.12;
+      const phi = Math.min(3.7, arc / R);
+      const rr = R - off;
+      const target = F.C.clone()
+        .addScaledVector(F.n, -rr * Math.cos(phi))
+        .addScaledVector(F.d, rr * Math.sin(phi))
+        .addScaledVector(F.a, r.dot(F.a))
+        .addScaledVector(F.d, Math.min(0, s)); // keep the knuckle row in place
+      const dv = target.sub(v).multiplyScalar(fade);
+      delta[i * 3] = dv.x;
+      delta[i * 3 + 1] = dv.y;
+      delta[i * 3 + 2] = dv.z;
+    }
+    geo.morphAttributes.position = [new THREE.BufferAttribute(delta, 3)];
+    geo.morphTargetsRelative = true;
+  }
+
+  // 0 = open hand, 1 = closed around a handle
+  setGrip(k) {
+    if (this.skinPartsMesh?.morphTargetInfluences) this.skinPartsMesh.morphTargetInfluences[0] = k;
+  }
+
+  // Where a held handle's centre sits, in the rig's wrist-joint space.
+  gripLocal(S) {
+    const i = this.boneNames.indexOf('wr' + S);
+    return this.fistFrames[S].C.clone().applyMatrix4(this.skeleton.boneInverses[i]);
+  }
+
+  // explore: muscles + bones (with skin only on head/hands/feet); demo: a full skinned body
+  setMode(mode) {
+    this.mode = mode;
+    const demo = mode === 'demo';
+    if (this.muscleMesh) this.muscleMesh.visible = !demo;
+    if (this.boneMesh) this.boneMesh.visible = !demo;
+    if (this.skinMesh) this.skinMesh.visible = demo;
   }
 
   // Bones are driven straight from the rig: bone world = rig joint world.
@@ -603,6 +944,7 @@ export class Body {
     const down = new THREE.Vector3(0, -1, 0);
     const rest = {};
     for (const n of names) {
+      if (!rig.J[n]) continue;
       rig.J[n].getWorldPosition(v);
       rig.group.worldToLocal(v);
       rest[n] = v.clone();
@@ -614,12 +956,14 @@ export class Body {
     for (const S of ['L', 'R']) {
       anat['sh' + S] = mir(j.shoulder, S);
       anat['el' + S] = mir(j.elbow, S);
+      anat['elP' + S] = anat['el' + S];
       anat['wr' + S] = mir(j.wrist, S);
       anat['hip' + S] = mir(j.hip, S);
       anat['kn' + S] = mir(j.knee, S);
       anat['an' + S] = mir(j.ankle, S);
       dir['sh' + S] = [anat['sh' + S], anat['el' + S]];
       dir['el' + S] = [anat['el' + S], anat['wr' + S]];
+      dir['elP' + S] = dir['el' + S];
       dir['wr' + S] = [anat['wr' + S], mir([j.knuckle[0], j.knuckle[1] - 0.02, j.knuckle[2]], S)];
       dir['hip' + S] = [anat['hip' + S], anat['kn' + S]];
       dir['kn' + S] = [anat['kn' + S], anat['an' + S]];
@@ -654,51 +998,159 @@ export class Body {
   update() {
     const rig = this.rig;
     rig.group.updateMatrixWorld(true);
-    for (let i = 0; i < this.bones.length; i++) this.bones[i].matrixWorld.copy(rig.J[this.boneNames[i]].matrixWorld);
+    for (let i = 0; i < this.bones.length; i++) {
+      const n = this.boneNames[i];
+      if (n.startsWith('elP')) {
+        // keep only 20% of the twist away from the anatomy's palms-forward rest
+        const S = n.slice(-1);
+        const rest = S === 'L' ? Math.PI / 2 : -Math.PI / 2;
+        const tw = rig.J['el' + S].rotation.y - rest;
+        _tw.makeRotationY(-0.8 * tw);
+        this.bones[i].matrixWorld.multiplyMatrices(rig.J['el' + S].matrixWorld, _tw);
+      } else this.bones[i].matrixWorld.copy(rig.J[n].matrixWorld);
+    }
   }
 
-  // colorFor(partInfo, index) -> THREE.Color | null (null = default tone)
+  // colorFor(partInfo, index) -> null (default) | THREE.Color | [THREE.Color, glow 0..1]
   paint(colorFor) {
-    const geo = this.muscleMesh.geometry;
-    const col = geo.attributes.color.array;
-    const part = geo.userData.part;
-    const cache = new Array(this.parts.length);
-    for (let i = 0; i < this.parts.length; i++) {
-      const p = this.parts[i];
-      cache[i] = colorFor(p, i) || this.tones[i];
+    const res = this.parts.map((p, i) => {
+      const r = colorFor(p, i);
+      if (!r) return null;
+      return Array.isArray(r) ? r : [r, 0];
+    });
+    {
+      const geo = this.muscleMesh.geometry;
+      const col = geo.attributes.color.array;
+      const glow = geo.attributes.glow.array;
+      const part = geo.userData.part;
+      for (let i = 0; i < part.length; i++) {
+        const r = res[part[i]];
+        const c = r ? r[0] : this.tones[part[i]];
+        col[i * 3] = c.r;
+        col[i * 3 + 1] = c.g;
+        col[i * 3 + 2] = c.b;
+        glow[i] = r ? r[1] : 0;
+      }
+      geo.attributes.color.needsUpdate = true;
+      geo.attributes.glow.needsUpdate = true;
     }
-    for (let i = 0; i < part.length; i++) {
-      const c = cache[part[i]];
-      col[i * 3] = c.r;
-      col[i * 3 + 1] = c.g;
-      col[i * 3 + 2] = c.b;
+    if (this.skinMesh) {
+      // skin: blend highlight colours over the skin tone, from several muscle samples per
+      // vertex, then smooth once over the mesh so the painted regions have soft edges
+      const geo = this.skinMesh.geometry;
+      const col = geo.attributes.color.array;
+      const glow = geo.attributes.glow.array;
+      const nv = geo.attributes.position.count;
+      const KS = this.skinKS;
+      const smp = this.skinSamples;
+      const sk = TONES.skin;
+      const tmp = this._skinTmp || (this._skinTmp = new Float32Array(nv * 4));
+      for (let i = 0; i < nv; i++) {
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let gl = 0;
+        let n = 0;
+        for (let k = 0; k < KS; k++) {
+          const pi = smp[i * KS + k];
+          if (pi === 0xffff) break;
+          n++;
+          const h = res[pi];
+          if (h && h[1] > 0) {
+            r += h[0].r;
+            g += h[0].g;
+            b += h[0].b;
+            gl += h[1];
+          } else {
+            r += sk.r;
+            g += sk.g;
+            b += sk.b;
+          }
+        }
+        if (!n) {
+          tmp.set([sk.r, sk.g, sk.b, 0], i * 4);
+          continue;
+        }
+        tmp[i * 4] = r / n;
+        tmp[i * 4 + 1] = g / n;
+        tmp[i * 4 + 2] = b / n;
+        tmp[i * 4 + 3] = gl / n;
+      }
+      const nb = this._skinNeighbours(geo);
+      for (let i = 0; i < nv; i++) {
+        let r = tmp[i * 4];
+        let g = tmp[i * 4 + 1];
+        let b = tmp[i * 4 + 2];
+        let gl = tmp[i * 4 + 3];
+        let n = 1;
+        for (let k = nb.start[i]; k < nb.start[i + 1]; k++) {
+          const j = nb.list[k];
+          r += tmp[j * 4];
+          g += tmp[j * 4 + 1];
+          b += tmp[j * 4 + 2];
+          gl += tmp[j * 4 + 3];
+          n++;
+        }
+        // push the blend toward the highlight a little so small regions still read
+        const t = Math.min(1, (gl / n) * 3.2);
+        const k = (0.4 + 0.6 * t) / n;
+        col[i * 3] = sk.r + (r - sk.r * n) * k;
+        col[i * 3 + 1] = sk.g + (g - sk.g * n) * k;
+        col[i * 3 + 2] = sk.b + (b - sk.b * n) * k;
+        glow[i] = (gl / n) * 0.8;
+      }
+      geo.attributes.color.needsUpdate = true;
+      geo.attributes.glow.needsUpdate = true;
     }
-    geo.attributes.color.needsUpdate = true;
   }
 
-  // GPU picking: render part ids into a 1x1 target under the pointer.
-  pick(renderer, camera, x, y, w, h) {
-    if (!this._pickRT) {
-      this._pickRT = new THREE.WebGLRenderTarget(1, 1);
-      this._pickMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-      this._pickScene = new THREE.Scene();
-      this._pickBuf = new Uint8Array(4);
+  _skinNeighbours(geo) {
+    if (this._nb) return this._nb;
+    const nv = geo.attributes.position.count;
+    const idx = geo.index.array;
+    const sets = Array.from({ length: nv }, () => new Set());
+    for (let i = 0; i < idx.length; i += 3) {
+      const a = idx[i];
+      const b = idx[i + 1];
+      const c = idx[i + 2];
+      sets[a].add(b).add(c);
+      sets[b].add(a).add(c);
+      sets[c].add(a).add(b);
     }
-    const mesh = this.muscleMesh;
-    const geo = mesh.geometry;
+    const start = new Uint32Array(nv + 1);
+    for (let i = 0; i < nv; i++) start[i + 1] = start[i] + sets[i].size;
+    const list = new Uint32Array(start[nv]);
+    for (let i = 0; i < nv; i++) list.set([...sets[i]], start[i]);
+    return (this._nb = { start, list });
+  }
+
+  // GPU picking: render part ids around the pointer and take the nearest clickable pixel,
+  // so taps on a bone, tendon or a thin gap still select the muscle right next to it.
+  pick(renderer, camera, x, y, w, h, radius = 12) {
+    const R = Math.round(radius);
+    const N = 2 * R + 1;
+    if (!this._pickRT || this._pickN !== N) {
+      this._pickRT?.dispose();
+      this._pickRT = new THREE.WebGLRenderTarget(N, N);
+      this._pickN = N;
+      this._pickBuf = new Uint8Array(N * N * 4);
+      this._pickMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+      this._blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+      this._pickScene = new THREE.Scene();
+    }
+    const target = this.mode === 'demo' ? this.skinMesh : this.muscleMesh;
+    const geo = target.geometry;
     const color = geo.attributes.color;
     geo.setAttribute('color', geo.userData.pickColor);
-    const others = this.meshes.filter((m) => m !== mesh);
-    const prevMat = mesh.material;
-    mesh.material = this._pickMat;
-    // occluders (bones/skin) render black so you can't pick through them
+    const others = this.meshes.filter((m) => m !== target && m.visible);
+    const prevMat = target.material;
+    target.material = this._pickMat;
     const prevOther = others.map((o) => o.material);
-    if (!this._blackMat) this._blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
     others.forEach((o) => (o.material = this._blackMat));
 
     const parent = this.group.parent;
     this._pickScene.add(this.group);
-    camera.setViewOffset(w, h, x, y, 1, 1);
+    camera.setViewOffset(w, h, x - R, y - R, N, N);
     const prevTarget = renderer.getRenderTarget();
     const prevClear = renderer.getClearColor(new THREE.Color());
     const prevAlpha = renderer.getClearAlpha();
@@ -708,21 +1160,32 @@ export class Body {
     renderer.setClearColor(0x000000, 1);
     renderer.clear();
     renderer.render(this._pickScene, camera);
-    renderer.readRenderTargetPixels(this._pickRT, 0, 0, 1, 1, this._pickBuf);
+    renderer.readRenderTargetPixels(this._pickRT, 0, 0, N, N, this._pickBuf);
     renderer.setRenderTarget(prevTarget);
     renderer.setClearColor(prevClear, prevAlpha);
     renderer.toneMapping = tm;
     camera.clearViewOffset();
     parent?.add(this.group);
-
-    mesh.material = prevMat;
+    target.material = prevMat;
     others.forEach((o, i) => (o.material = prevOther[i]));
     geo.setAttribute('color', color);
+
     const b = this._pickBuf;
-    const id = b[0] + (b[1] << 8) - 1;
-    if (id < 0 || id >= this.parts.length) return null;
-    const p = this.parts[id];
-    return p.key ? p : null;
+    let best = null;
+    let bestD = Infinity;
+    for (let py = 0; py < N; py++) {
+      for (let px = 0; px < N; px++) {
+        const o = (py * N + px) * 4;
+        const id = b[o] + (b[o + 1] << 8) - 1;
+        if (id < 0 || id >= this.parts.length || !this.parts[id].key) continue;
+        const d = (px - R) * (px - R) + (py - R) * (py - R);
+        if (d < bestD && d <= R * R) {
+          bestD = d;
+          best = this.parts[id];
+        }
+      }
+    }
+    return best;
   }
 
   dispose() {

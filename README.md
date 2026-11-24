@@ -5,7 +5,7 @@ An interactive 3D muscle explorer for the web (desktop and mobile).
 - **Real anatomy**: a male écorché (muscles and skeleton) built from the BodyParts3D anatomy dataset and rendered with [three.js](https://threejs.org). Drag to rotate, pinch or scroll to zoom.
 - **Every head is separate**: tap the long head of the biceps, the lateral head of the triceps, the clavicular head of the chest, and so on. There are about 80 selectable muscles in 21 groups.
 - **Head-specific exercises**: each muscle head lists the exercises that target it, as primary or secondary.
-- **Animated 3D demos** for 38 exercises. The anatomy mesh is skinned to a pose rig, and the worked heads light up (primary in lime, secondary in amber).
+- **Animated 3D demos** for 38 exercises. The demos show a skinned human body (in shorts), with the worked heads painted on the skin: primary in lime, secondary in amber. Hands close around dumbbells and bars.
 
 There's no build step: it's plain HTML, CSS and ES modules, with three.js loaded from a CDN.
 

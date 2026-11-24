@@ -20,11 +20,11 @@ const state = {
   rep: 0,
 };
 const HL = {
-  hover: new THREE.Color(0xe0897c),
-  sel: new THREE.Color(0xc8f03a),
-  selGroup: new THREE.Color(0x8fa83a),
-  prim: new THREE.Color(0xc8f03a),
-  sec: new THREE.Color(0xf09a3a),
+  hover: new THREE.Color(0xf2c9a0), // warm sand
+  sel: new THREE.Color(0xd4ff3a), // lime: the selected head
+  sibling: new THREE.Color(0x4aa8ff), // blue: other heads of the same muscle
+  prim: new THREE.Color(0xd4ff3a),
+  sec: new THREE.Color(0xffa53a),
   dim: new THREE.Color(0x6e5552),
 };
 const EXPLORE_CAM = { pos: [0, 1.15, 3.9], target: [0, 0.95, 0] };
@@ -145,6 +145,7 @@ async function buildBody() {
   scene.add(rig.group);
   body = new Body(data, rig);
   scene.add(body.group);
+  for (const S of ['L', 'R']) rig.grip[S].position.copy(body.gripLocal(S));
   rig.apply(REST_POSE);
   body.update();
 }
@@ -155,6 +156,8 @@ function startDemo(id, { keepCamera = false, keepTime = false } = {}) {
   props?.dispose();
   compiled = compile(ex.anim);
   props = buildProps(rig, ex.anim.props);
+  const holds = (ex.anim.props || []).some((p) => ['dumbbell', 'barbell', 'dbMid', 'pullbar'].includes(p.type));
+  body.setGrip(holds ? 1 : 0.25);
   if (!keepTime) {
     state.time = 0;
     state.rep = 0;
@@ -167,23 +170,25 @@ function stopDemo() {
   props?.dispose();
   props = null;
   compiled = null;
+  body.setGrip(0);
   rig.apply(REST_POSE);
 }
 
 function paint() {
   if (!body) return;
   const ex = state.mode === 'demo' ? EXERCISE_BY_ID[state.exercise] : null;
+  body.setMode(ex ? 'demo' : 'explore');
   body.paint((p) => {
-    if (!p.key) return ex ? HL.dim : null;
+    if (!p.key) return null;
     if (ex) {
-      if (ex.parts.primary.includes(p.key)) return HL.prim;
-      if (ex.parts.secondary.includes(p.key)) return HL.sec;
-      return p.key === state.hover ? HL.hover : HL.dim;
+      if (ex.parts.primary.includes(p.key)) return [HL.prim, 0.35];
+      if (ex.parts.secondary.includes(p.key)) return [HL.sec, 0.22];
+      return null;
     }
-    if (state.part && p.key === state.part) return HL.sel;
-    if (p.key === state.hover) return HL.hover;
-    if (state.part && p.group === PART_GROUP[state.part]) return HL.selGroup;
-    if (!state.part && state.group && p.group === state.group) return HL.sel;
+    if (state.part && p.key === state.part) return [HL.sel, 0.4];
+    if (p.key === state.hover) return [HL.hover, 0.18];
+    if (state.part && p.group === PART_GROUP[state.part]) return [HL.sibling, 0.18];
+    if (!state.part && state.group && p.group === state.group) return [HL.sel, 0.35];
     return null;
   });
 }
@@ -368,7 +373,7 @@ function renderPart(id) {
     <p class="eyebrow">${GROUPS[g].name}${p.alias ? ` · ${p.name}` : ''}</p>
     <h1>${partName(id)}</h1>
     <p class="muted">${p.desc}</p>
-    ${GROUPS[g].parts.length > 1 ? `<h3>Other parts of the ${GROUPS[g].name.toLowerCase()}</h3>${headChips(g, id)}` : ''}
+    ${GROUPS[g].parts.length > 1 ? `<h3>Other parts of the ${GROUPS[g].name.toLowerCase()}</h3>${headChips(g, id)}<div class="legend"><span class="lg sel"></span>Selected <span class="lg sib"></span>Rest of the ${GROUPS[g].name.toLowerCase()}</div>` : ''}
     <h3>${list.length ? `${list.length} exercises` : 'Exercises'}</h3>
     ${exList(list)}`;
 }
@@ -485,4 +490,4 @@ buildBody()
     $('#loading').innerHTML = '<p>Couldn’t load the 3D body. Please refresh.</p>';
   });
 // handy for debugging from the console
-window.f360 = { state, renderer, scene, camera, controls, flyTo, go, pickAt: (x, y) => pick({ clientX: x, clientY: y }), get rig() { return rig; }, get body() { return body; } };
+window.f360 = { state, renderer, scene, camera, controls, flyTo, go, pickAt: (x, y) => pick({ clientX: x, clientY: y }), get rig() { return rig; }, get body() { return body; }, get props() { return props; } };

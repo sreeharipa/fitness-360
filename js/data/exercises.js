@@ -13,6 +13,8 @@
 //   footAngle / handAngle = world angle of the foot / hand (0 = foot flat)
 //   armAbs = world angle of the upper arm (0 = hanging straight down, -PI/2 = pointing forward)
 
+import { GROUPS, PART_GROUP } from './muscles.js';
+
 const H = Math.PI / 2;
 const PI = Math.PI;
 
@@ -698,12 +700,356 @@ export const EXERCISES = [
       ],
     },
   },
+  // ---------------------------------------------------------------- HEAD-SPECIFIC
+  {
+    id: 'incline-db-press',
+    name: 'Incline Dumbbell Press',
+    primary: ['chest', 'shoulders'],
+    secondary: ['triceps'],
+    equipment: 'Dumbbells, incline bench',
+    level: 'Intermediate',
+    sets: '4 × 8–10',
+    steps: [
+      'Set a bench to about 30–40° and lie back with a dumbbell in each hand.',
+      'Press the dumbbells up over your upper chest, palms facing forward.',
+      'Lower them to the top of your chest, elbows slightly tucked.',
+      'Press back up and slightly in until your arms are straight.',
+    ],
+    tips: ['Higher than 45° turns it into a shoulder press.', 'Keep your shoulder blades pinned to the bench.', 'Feel the stretch across the collarbone.'],
+    anim: {
+      duration: 3.2,
+      cam: { pos: [2.6, 1.7, 1.5], target: [0, 0.75, -0.1] },
+      legPref: [1, 0],
+      props: [{ type: 'dumbbell' }, { type: 'bench', x: 0, z: 0.05, height: 0.45, incline: 0.62 }],
+      base: { pos: [0, 0.575, 0.12], rot: [-0.95, 0, 0], neck: [0.25, 0, 0], ik: { foot: [0.07, 0.62] }, footAngle: 0 },
+      keys: loop(
+        { sh: [-2.15, H, 0], el: [0, 0, 0] },
+        { sh: [-0.3, 0, 1.2], el: [-1.55, 0, 0] },
+      ),
+    },
+  },
+  {
+    id: 'drag-curl',
+    name: 'Dumbbell Drag Curl',
+    primary: ['biceps'],
+    secondary: ['forearms'],
+    equipment: 'Dumbbells',
+    level: 'Intermediate',
+    sets: '3 × 10–12',
+    steps: [
+      'Stand tall holding dumbbells at your sides, palms facing forward.',
+      'Curl the weights up while pulling your elbows back behind your body.',
+      'Keep the dumbbells close, "dragging" them up the front of your torso.',
+      'Squeeze at the top, then lower slowly along the same path.',
+    ],
+    tips: ['Elbows travel back, not forward. That keeps the long head working.', 'Go lighter than a normal curl.', 'Don’t lean back.'],
+    anim: {
+      duration: 2.8,
+      props: [{ type: 'dumbbell' }],
+      base: { ...STAND },
+      keys: loop(
+        { sh: [0.05, 0, 0.08], el: [-0.12, H, 0] },
+        { sh: [0.6, 0, 0.12], el: [-2.05, H, 0] },
+      ),
+    },
+  },
+  {
+    id: 'wide-curl',
+    name: 'Wide-Grip Curl',
+    primary: ['biceps'],
+    secondary: ['forearms'],
+    equipment: 'Dumbbells',
+    level: 'Beginner',
+    sets: '3 × 10–12',
+    steps: [
+      'Stand holding dumbbells with your arms angled out from your sides, palms forward.',
+      'Keep the upper arms still at that angle.',
+      'Curl the weights up toward your shoulders.',
+      'Lower under control until your arms are straight.',
+    ],
+    tips: ['The wider arm angle shifts more work to the short (inner) head.', 'Keep your wrists straight.', 'No swinging.'],
+    anim: {
+      duration: 2.8,
+      props: [{ type: 'dumbbell' }],
+      base: { ...STAND },
+      keys: loop(
+        { sh: [0, 0, 0.42], el: [-0.12, H, 0] },
+        { sh: [-0.12, 0, 0.42], el: [-2.25, H, 0] },
+      ),
+    },
+  },
+  {
+    id: 'reverse-curl',
+    name: 'Reverse Curl',
+    primary: ['forearms', 'biceps'],
+    secondary: [],
+    equipment: 'Dumbbells',
+    level: 'Beginner',
+    sets: '3 × 12',
+    steps: [
+      'Stand holding dumbbells with an overhand grip, palms facing behind you.',
+      'Pin your elbows to your sides.',
+      'Curl the weights up, keeping the palms facing down.',
+      'Lower slowly.',
+    ],
+    tips: ['The palms-down grip shifts work onto the brachioradialis and brachialis.', 'Keep the wrists straight; don’t let them droop.'],
+    anim: {
+      duration: 2.6,
+      props: [{ type: 'dumbbell' }],
+      base: { ...STAND },
+      keys: loop(
+        { sh: [0.05, 0, 0.08], el: [-0.12, -H, 0] },
+        { sh: [-0.15, 0, 0.08], el: [-2.2, -H, 0] },
+      ),
+    },
+  },
+  {
+    id: 'diamond-push-up',
+    name: 'Close-Grip Push-Up',
+    primary: ['triceps', 'chest'],
+    secondary: ['shoulders'],
+    equipment: 'Bodyweight',
+    level: 'Intermediate',
+    sets: '3 × 8–12',
+    steps: [
+      'Start in a high plank with your hands under your chest, close together.',
+      'Keep your elbows tucked tight to your ribs.',
+      'Lower your chest toward your hands.',
+      'Press back up by straightening your arms.',
+    ],
+    tips: ['Elbows brush your sides; they don’t flare.', 'Body stays in one straight line.', 'Too hard? Do them from your knees.'],
+    anim: {
+      duration: 2.6,
+      cam: { pos: [2.9, 1.15, 0.9], target: [0, 0.3, -0.05] },
+      props: [{ type: 'mat', z: -0.05 }],
+      base: { ik: { hand: [0.045, 0.62], foot: [0.17, -0.75] }, footAngle: 1.35, handAngle: -H, sh: [0, 0, 0.03], neck: [-0.15, 0, 0] },
+      keys: loop(
+        { pos: [0, 0.455, 0.135], rot: [H - 0.312, 0, 0] },
+        { pos: [0, 0.27, 0.172], rot: [H - 0.11, 0, 0] },
+      ),
+    },
+  },
+  {
+    id: 'front-raise',
+    name: 'Front Raise',
+    primary: ['shoulders'],
+    secondary: ['chest'],
+    equipment: 'Dumbbells',
+    level: 'Beginner',
+    sets: '3 × 12',
+    steps: [
+      'Stand holding dumbbells in front of your thighs, palms facing you.',
+      'With a slight bend in the elbows, raise both arms straight in front of you.',
+      'Stop at shoulder height.',
+      'Lower slowly.',
+    ],
+    tips: ['Don’t swing or lean back.', 'Stop at shoulder height.', 'Light weight, slow tempo.'],
+    anim: {
+      duration: 2.8,
+      props: [{ type: 'dumbbell' }],
+      base: { pos: [0, 0.995, 0] },
+      keys: loop({ sh: [-0.1, 0, 0.06], el: [-0.12, -H, 0] }, { sh: [-1.55, 0, 0.06], el: [-0.12, -H, 0] }, 0.45, 0.08),
+    },
+  },
+  {
+    id: 'reverse-fly',
+    name: 'Bent-Over Reverse Fly',
+    primary: ['shoulders', 'upper_back'],
+    secondary: ['traps', 'rotator_cuff'],
+    equipment: 'Dumbbells',
+    level: 'Beginner',
+    sets: '3 × 12–15',
+    steps: [
+      'Hold light dumbbells and hinge forward until your torso is nearly parallel to the floor.',
+      'Let the weights hang under your shoulders, palms facing each other.',
+      'With soft elbows, raise your arms out to the sides.',
+      'Squeeze your shoulder blades at the top, then lower slowly.',
+    ],
+    tips: ['Lead with the elbows and pinkies.', 'Keep your back flat and still.', 'Go light: the rear delts are small.'],
+    anim: {
+      duration: 2.8,
+      props: [{ type: 'dumbbell' }],
+      base: { pos: [0, 0.9, -0.12], rot: [0.95, 0, 0], spine: [0.1, 0, 0], neck: [-0.6, 0, 0], ik: { foot: [0.07, 0] }, footAngle: 0, el: [-0.25, 0, 0] },
+      keys: loop({ sh: [-1.05, 0, 0.12] }, { sh: [-1.05, 0, 1.35] }, 0.45, 0.1),
+    },
+  },
+  {
+    id: 'external-rotation',
+    name: 'Band External Rotation',
+    primary: ['rotator_cuff'],
+    secondary: ['shoulders'],
+    equipment: 'Resistance band',
+    level: 'Beginner',
+    sets: '3 × 15 each arm',
+    steps: [
+      'Stand with your elbows bent to 90°, tucked against your sides, forearms pointing forward.',
+      'Hold a band between your hands.',
+      'Rotate your forearms outward, keeping the elbows pinned.',
+      'Return slowly.',
+    ],
+    tips: ['Elbows stay glued to your sides.', 'Small, controlled movement; it’s not about load.', 'Great as a warm-up before pressing.'],
+    anim: {
+      duration: 2.4,
+      base: { pos: [0, 0.995, 0] },
+      keys: loop({ sh: [0, 0, 0.05], el: [-H, 0, 0] }, { sh: [0, 1.05, 0.05], el: [-H, 0, 0] }, 0.45, 0.1),
+    },
+  },
+  {
+    id: 'hip-abduction',
+    name: 'Standing Hip Abduction',
+    primary: ['glutes'],
+    secondary: ['hip_flexors'],
+    equipment: 'Bodyweight or band',
+    level: 'Beginner',
+    sets: '3 × 15 each leg',
+    steps: [
+      'Stand tall; hold onto something for balance if you need to.',
+      'Keeping the leg straight and toes forward, lift one leg out to the side.',
+      'Pause at the top, then lower slowly.',
+      'Finish your reps, then switch legs.',
+    ],
+    tips: ['Don’t lean your torso to the side.', 'Toes point forward, not up.', 'Add a band above the knees to make it harder.'],
+    anim: {
+      duration: 2.4,
+      base: { sh: [0, 0, 0.12], el: [-0.15, 0, 0] },
+      keys: loop(
+        { pos: [0, 0.995, 0], hipL: [0, 0, 0.05], hipR: [0, 0, 0.05] },
+        { pos: [-0.025, 0.995, 0], rot: [0, 0, -0.05], hipL: [0, 0, 0.62], hipR: [0, 0, 0.0] },
+        0.45, 0.12,
+      ),
+    },
+  },
+  {
+    id: 'sumo-squat',
+    name: 'Sumo Squat',
+    primary: ['adductors', 'glutes', 'quads'],
+    secondary: ['hamstrings'],
+    equipment: 'Bodyweight',
+    level: 'Beginner',
+    sets: '3 × 12–15',
+    steps: [
+      'Stand with your feet much wider than shoulder-width, toes turned out.',
+      'Keep your chest up and sit straight down between your heels.',
+      'Push your knees out over your toes as you lower.',
+      'Drive back up, squeezing your glutes and inner thighs.',
+    ],
+    tips: ['Knees follow the toes.', 'Torso stays upright.', 'The wide stance works the adductors.'],
+    anim: {
+      duration: 3.2,
+      base: { ik: { foot: [0.07, 0] }, footAngle: 0, hip: [0, 0, 0.36], sh: [-0.55, 0, 0.3], el: [-2.0, H, 0] },
+      keys: loop({ pos: [0, 0.94, 0] }, { pos: [0, 0.62, -0.08], rot: [0.18, 0, 0], neck: [-0.15, 0, 0] }),
+    },
+  },
+  {
+    id: 'standing-leg-curl',
+    name: 'Standing Leg Curl',
+    primary: ['hamstrings'],
+    secondary: ['calves'],
+    equipment: 'Bodyweight or ankle weight',
+    level: 'Beginner',
+    sets: '3 × 12 each leg',
+    steps: [
+      'Stand tall, holding a wall in front of you for balance.',
+      'Keeping your thighs in line, bend one knee and bring the heel toward your glutes.',
+      'Squeeze the hamstring at the top.',
+      'Lower slowly. Finish your reps, then switch legs.',
+    ],
+    tips: ['Don’t let the knee drift forward.', 'Control the lowering.', 'Knee-only curls are the best way to train the short head of the biceps femoris.'],
+    anim: {
+      duration: 2.4,
+      base: { pos: [0, 0.995, 0], sh: [-1.25, 0, 0.12], el: [-0.25, 0, 0] },
+      keys: loop({ hipL: [0, 0, 0.03], knL: [0.05, 0, 0] }, { hipL: [0.12, 0, 0.03], knL: [1.9, 0, 0], anL: [0.35, 0, 0] }, 0.45, 0.12),
+    },
+  },
+  {
+    id: 'tibialis-raise',
+    name: 'Tibialis Raise',
+    primary: ['shins'],
+    secondary: [],
+    equipment: 'Bodyweight',
+    level: 'Beginner',
+    sets: '3 × 20',
+    steps: [
+      'Stand with your back against a wall, heels about a foot in front of you.',
+      'Keep your legs straight and lift your toes as high as you can.',
+      'Pause at the top.',
+      'Lower slowly without letting the toes slap down.',
+    ],
+    tips: ['Heels stay planted.', 'Go for a burn: high reps work best.', 'Great for runners and knee health.'],
+    anim: {
+      duration: 2,
+      base: { sh: [0, 0, 0.1], el: [-0.15, 0, 0] },
+      keys: loop({ pos: [0, 0.995, 0], an: [0, 0, 0] }, { pos: [0, 1.006, 0], an: [-0.42, 0, 0] }, 0.4, 0.15),
+    },
+  },
+
 ];
 
 export const EXERCISE_BY_ID = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
 
-export function exercisesFor(muscleId) {
-  const prim = EXERCISES.filter((e) => e.primary.includes(muscleId));
-  const sec = EXERCISES.filter((e) => !e.primary.includes(muscleId) && e.secondary.includes(muscleId));
-  return [...prim.map((e) => ({ ex: e, role: 'primary' })), ...sec.map((e) => ({ ex: e, role: 'secondary' }))];
+// Which individual heads each exercise works. Lists are [primary, secondary].
+// Group ids (e.g. 'quads') expand to every part in that group.
+const PARTS_FOR = {
+  squat: [['quads', 'glute_max', 'add_magnus'], ['bf_long', 'semitend', 'semimem', 'lower_back', 'soleus', 'rectus_abd']],
+  'split-squat': [['vastus_lat', 'vastus_med', 'vastus_int', 'rectus_fem', 'glute_max'], ['glute_med', 'add_magnus', 'bf_long', 'semitend', 'gastroc_med', 'gastroc_lat']],
+  rdl: [['bf_long', 'semitend', 'semimem', 'glute_max'], ['lower_back', 'add_magnus', 'fds', 'fcu_hum', 'trap_upper', 'trap_mid', 'lat_dorsi']],
+  deadlift: [['glute_max', 'bf_long', 'semitend', 'semimem', 'lower_back', 'vastus_lat', 'vastus_med', 'vastus_int'], ['rectus_fem', 'add_magnus', 'trap_upper', 'trap_mid', 'lat_dorsi', 'fds', 'fcu_hum', 'fcu_uln', 'rectus_abd']],
+  'glute-bridge': [['glute_max'], ['glute_med', 'bf_long', 'semitend', 'semimem', 'lower_back']],
+  'calf-raise': [['gastroc_med', 'gastroc_lat', 'soleus'], ['plantaris', 'fib_long', 'fib_brev']],
+  'single-calf-raise': [['gastroc_med', 'gastroc_lat', 'soleus'], ['plantaris', 'fib_long', 'fib_brev', 'glute_med']],
+  'push-up': [['pec_stern', 'pec_abd', 'triceps_lat', 'triceps_med'], ['pec_clav', 'delt_front', 'triceps_long', 'serratus', 'rectus_abd']],
+  'db-bench-press': [['pec_stern', 'pec_abd'], ['pec_clav', 'delt_front', 'triceps_lat', 'triceps_med', 'triceps_long']],
+  'db-fly': [['pec_stern', 'pec_clav'], ['pec_abd', 'delt_front', 'biceps_short', 'coracobrachialis']],
+  'bicep-curl': [['biceps_long', 'biceps_short'], ['brachialis', 'brachioradialis', 'fcr', 'pronator_hum']],
+  'hammer-curl': [['brachialis', 'brachioradialis'], ['biceps_long', 'ecrl', 'ecrb']],
+  'overhead-triceps': [['triceps_long'], ['triceps_lat', 'triceps_med']],
+  'bench-dip': [['triceps_lat', 'triceps_med'], ['triceps_long', 'delt_front', 'pec_abd', 'pec_stern']],
+  'shoulder-press': [['delt_front', 'delt_side'], ['triceps_lat', 'triceps_med', 'triceps_long', 'trap_upper', 'pec_clav', 'serratus', 'supraspinatus']],
+  'lateral-raise': [['delt_side'], ['delt_front', 'supraspinatus', 'trap_upper']],
+  'bent-over-row': [['lat_dorsi', 'trap_mid', 'rhomboid_major', 'rhomboid_minor'], ['teres_major', 'delt_rear', 'infraspinatus', 'biceps_long', 'biceps_short', 'brachialis', 'brachioradialis', 'lower_back', 'fds']],
+  'chin-up': [['lat_dorsi', 'biceps_short', 'biceps_long'], ['teres_major', 'brachialis', 'trap_lower', 'rhomboid_major', 'pec_abd', 'rectus_abd', 'fds']],
+  shrug: [['trap_upper'], ['levator_scap', 'trap_mid', 'fds', 'fcu_hum']],
+  superman: [['ilio_lumb', 'ilio_thor', 'longissimus', 'spinalis'], ['glute_max', 'bf_long', 'semitend', 'trap_lower', 'delt_rear']],
+  crunch: [['rectus_abd'], ['ext_oblique']],
+  'leg-raise': [['rectus_abd', 'iliacus', 'psoas'], ['rectus_fem', 'ext_oblique', 'tfl', 'sartorius']],
+  plank: [['rectus_abd'], ['ext_oblique', 'serratus', 'delt_front', 'glute_max', 'rectus_fem', 'vastus_lat']],
+  'russian-twist': [['ext_oblique'], ['rectus_abd', 'iliacus', 'psoas']],
+  'side-bend': [['ext_oblique'], ['ilio_lumb', 'longissimus']],
+  'farmer-march': [['fds', 'fcu_hum', 'fcu_uln', 'fcr', 'trap_upper'], ['rectus_abd', 'ext_oblique', 'glute_med', 'iliacus', 'psoas', 'gastroc_med', 'soleus']],
+  'incline-db-press': [['pec_clav', 'delt_front'], ['pec_stern', 'triceps_lat', 'triceps_med', 'triceps_long', 'serratus']],
+  'drag-curl': [['biceps_long'], ['biceps_short', 'brachialis', 'brachioradialis']],
+  'wide-curl': [['biceps_short'], ['biceps_long', 'brachialis', 'coracobrachialis']],
+  'reverse-curl': [['brachioradialis', 'brachialis'], ['ecrl', 'ecrb', 'ext_dig', 'biceps_long']],
+  'diamond-push-up': [['triceps_lat', 'triceps_med', 'triceps_long'], ['pec_stern', 'pec_clav', 'delt_front', 'rectus_abd']],
+  'front-raise': [['delt_front'], ['pec_clav', 'delt_side', 'serratus', 'trap_upper']],
+  'reverse-fly': [['delt_rear', 'rhomboid_major', 'rhomboid_minor'], ['trap_mid', 'infraspinatus', 'teres_minor', 'trap_lower']],
+  'external-rotation': [['infraspinatus', 'teres_minor'], ['delt_rear', 'supraspinatus']],
+  'hip-abduction': [['glute_med', 'glute_min'], ['tfl', 'glute_max', 'sartorius']],
+  'sumo-squat': [['add_magnus', 'add_longus', 'glute_max', 'vastus_med'], ['add_brevis', 'gracilis', 'vastus_lat', 'rectus_fem', 'semitend']],
+  'standing-leg-curl': [['bf_short', 'bf_long', 'semitend', 'semimem'], ['gastroc_med', 'gastroc_lat', 'gracilis', 'sartorius']],
+  'tibialis-raise': [['tib_ant'], ['edl', 'ehl']],
+};
+
+const expand = (list) => list.flatMap((id) => (GROUPS[id] ? GROUPS[id].parts : [id]));
+for (const e of EXERCISES) {
+  const p = PARTS_FOR[e.id];
+  e.parts = p ? { primary: expand(p[0]), secondary: expand(p[1]).filter((x) => !expand(p[0]).includes(x)) } : { primary: expand(e.primary), secondary: expand(e.secondary) };
+  // groups touched (for group pages), derived from parts so the two never disagree
+  const pg = (ids) => [...new Set(ids.map((x) => PART_GROUP[x]))];
+  e.primary = pg(e.parts.primary);
+  e.secondary = pg(e.parts.secondary).filter((g) => !e.primary.includes(g));
+}
+
+// Exercises for a group id or a part id, primary first.
+export function exercisesFor(id) {
+  const isPart = !GROUPS[id];
+  const prim = [];
+  const sec = [];
+  for (const e of EXERCISES) {
+    const P = isPart ? e.parts.primary : e.primary;
+    const S = isPart ? e.parts.secondary : e.secondary;
+    if (P.includes(id)) prim.push({ ex: e, role: 'primary' });
+    else if (S.includes(id)) sec.push({ ex: e, role: 'secondary' });
+  }
+  return [...prim, ...sec];
 }

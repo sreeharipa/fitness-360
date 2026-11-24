@@ -1,16 +1,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Rig, COLORS } from './rig.js';
+import { Rig } from './rig.js';
+import { loadAnatomy, anatomyDims, Body } from './anatomy.js';
 import { compile, sample, REST_POSE } from './anim.js';
 import { buildProps } from './props.js';
-import { MUSCLES, MUSCLE_IDS } from './data/muscles.js';
+import { GROUPS, GROUP_IDS, PARTS, PART_GROUP, partName } from './data/muscles.js';
 import { EXERCISE_BY_ID, exercisesFor } from './data/exercises.js';
 
 // ------------------------------------------------------------------ state
 const state = {
-  gender: localStorage.getItem('f360-gender') || 'male',
   mode: 'explore', // 'explore' | 'demo'
-  muscle: null,
+  group: null, // selected muscle group id
+  part: null, // selected head / part id
   exercise: null,
   hover: null,
   playing: true,
@@ -19,12 +20,12 @@ const state = {
   rep: 0,
 };
 const HL = {
-  hover: new THREE.Color(0xdc7a6f),
-  sel: new THREE.Color(0xd4ff3a),
-  prim: new THREE.Color(0xd4ff3a),
-  sec: new THREE.Color(0xffa53a),
-  dim: new THREE.Color(0x6f6a76),
-  base: new THREE.Color(COLORS.muscle),
+  hover: new THREE.Color(0xe0897c),
+  sel: new THREE.Color(0xc8f03a),
+  selGroup: new THREE.Color(0x8fa83a),
+  prim: new THREE.Color(0xc8f03a),
+  sec: new THREE.Color(0xf09a3a),
+  dim: new THREE.Color(0x6e5552),
 };
 const EXPLORE_CAM = { pos: [0, 1.15, 3.9], target: [0, 0.95, 0] };
 const DEFAULT_DEMO_CAM = { pos: [2.3, 1.5, 3.0], target: [0, 0.9, 0] };
@@ -134,17 +135,18 @@ new ResizeObserver(resize).observe(viewer);
 
 // ------------------------------------------------------------------ rig + demo
 let rig = null;
+let body = null;
 let props = null;
 let compiled = null;
 
-function buildRig() {
-  if (rig) rig.dispose();
-  props = null;
-  rig = new Rig(state.gender);
+async function buildBody() {
+  const data = await loadAnatomy();
+  rig = new Rig(anatomyDims(data));
   scene.add(rig.group);
-  if (state.mode === 'demo' && state.exercise) startDemo(state.exercise, { keepCamera: true, keepTime: true });
-  else rig.apply(REST_POSE);
-  paint();
+  body = new Body(data, rig);
+  scene.add(body.group);
+  rig.apply(REST_POSE);
+  body.update();
 }
 
 function startDemo(id, { keepCamera = false, keepTime = false } = {}) {
@@ -169,31 +171,21 @@ function stopDemo() {
 }
 
 function paint() {
-  if (!rig) return;
+  if (!body) return;
   const ex = state.mode === 'demo' ? EXERCISE_BY_ID[state.exercise] : null;
-  for (const id of MUSCLE_IDS) {
-    const mat = rig.mats.muscle[id];
-    let col = HL.base;
-    let glow = 0;
+  body.paint((p) => {
+    if (!p.key) return ex ? HL.dim : null;
     if (ex) {
-      if (ex.primary.includes(id)) {
-        col = HL.prim;
-        glow = 0.35;
-      } else if (ex.secondary.includes(id)) {
-        col = HL.sec;
-        glow = 0.15;
-      } else col = HL.dim;
-      if (state.hover === id) glow += 0.15;
-    } else if (id === state.muscle) {
-      col = HL.sel;
-      glow = 0.4;
-    } else if (id === state.hover) {
-      col = HL.hover;
+      if (ex.parts.primary.includes(p.key)) return HL.prim;
+      if (ex.parts.secondary.includes(p.key)) return HL.sec;
+      return p.key === state.hover ? HL.hover : HL.dim;
     }
-    mat.color.copy(col);
-    mat.emissive.copy(col);
-    mat.emissiveIntensity = glow;
-  }
+    if (state.part && p.key === state.part) return HL.sel;
+    if (p.key === state.hover) return HL.hover;
+    if (state.part && p.group === PART_GROUP[state.part]) return HL.selGroup;
+    if (!state.part && state.group && p.group === state.group) return HL.sel;
+    return null;
+  });
 }
 
 // ------------------------------------------------------------------ camera fly-to
@@ -216,16 +208,12 @@ function exploreView(side) {
 }
 
 // ------------------------------------------------------------------ picking
-const ray = new THREE.Raycaster();
-const ndc = new THREE.Vector2();
 function pick(ev) {
-  if (!rig) return null;
+  if (!body) return null;
   const r = renderer.domElement.getBoundingClientRect();
-  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-  ray.setFromCamera(ndc, camera);
-  const hit = ray.intersectObjects(rig.meshes, false)[0];
-  return hit?.object.userData.muscle || null;
+  return body.pick(renderer, camera, ev.clientX - r.left, ev.clientY - r.top, r.width, r.height)?.key || null;
 }
+const tipText = (key) => `${partName(key)} · ${GROUPS[PART_GROUP[key]].name}`;
 
 let down = null;
 const canvas = renderer.domElement;
@@ -236,8 +224,9 @@ canvas.addEventListener('pointerup', (e) => {
   down = null;
   if (moved > 7) return;
   const m = pick(e);
-  if (state.mode === 'explore' && m) go(`#m/${m}`);
-  else if (state.mode === 'demo' && m) showTip(MUSCLES[m].name, e, 1400);
+  if (state.mode === 'explore' && m) go(`#p/${m}`);
+  else if (state.mode === 'demo' && m) showTip(tipText(m), e, 1600);
+  else if (state.mode === 'demo') hideTip();
 });
 let hoverRaf = 0;
 canvas.addEventListener('pointermove', (e) => {
@@ -250,7 +239,7 @@ canvas.addEventListener('pointermove', (e) => {
       paint();
     }
     canvas.style.cursor = m && state.mode === 'explore' ? 'pointer' : 'grab';
-    if (m) showTip(MUSCLES[m].name, e);
+    if (m) showTip(tipText(m), e);
     else hideTip();
   });
 });
@@ -289,24 +278,24 @@ function route() {
     if (!was) startDemo(id);
     renderExercise(EXERCISE_BY_ID[id]);
   } else {
+    const group = kind === 'm' && GROUPS[id] ? id : kind === 'p' && PARTS[id] ? PART_GROUP[id] : null;
+    const part = kind === 'p' && PARTS[id] ? id : null;
     if (state.mode === 'demo') {
       state.mode = 'explore';
       state.exercise = null;
       stopDemo();
-      const side = kind === 'm' && MUSCLES[id] ? MUSCLES[id].view : 'front';
-      exploreView(side);
+      exploreView(group ? GROUPS[group].view : 'front');
+    } else if ((route.fromList || route.first) && group && (group !== state.group || part !== state.part)) {
+      exploreView(GROUPS[group].view);
     }
-    if (kind === 'm' && MUSCLES[id]) {
-      const fromList = state.muscle !== id && route.fromList;
-      state.muscle = id;
-      if (fromList) exploreView(MUSCLES[id].view);
-      renderMuscle(id);
-    } else {
-      state.muscle = null;
-      renderHome();
-    }
+    state.group = group;
+    state.part = part;
+    if (part) renderPart(part);
+    else if (group) renderGroup(group);
+    else renderHome();
   }
   route.fromList = false;
+  route.first = false;
   document.body.dataset.mode = state.mode;
   paint();
   panelBody.scrollTop = 0;
@@ -316,54 +305,80 @@ const chev = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
 const backIcon = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function chip(id) {
-  return `<button class="chip" data-muscle="${id}"><span class="dot"></span>${MUSCLES[id].name}</button>`;
+  return `<button class="chip" data-muscle="${id}"><span class="dot"></span>${GROUPS[id].name}</button>`;
+}
+
+function exList(list) {
+  if (!list.length) return '<p class="muted small">No dedicated exercise in the library yet. It works alongside the other muscles in this group.</p>';
+  return `<div class="ex-list">${list
+    .map(
+      ({ ex, role }) => `
+      <button class="ex-card" data-go="#e/${ex.id}">
+        <span class="ex-main">
+          <span class="ex-name">${ex.name}</span>
+          <span class="ex-meta">${ex.equipment} · ${ex.level}</span>
+        </span>
+        <span class="tag ${role === 'primary' ? 'prim' : 'sec'}">${role === 'primary' ? 'Primary' : 'Secondary'}</span>
+        ${chev}
+      </button>`,
+    )
+    .join('')}</div>`;
+}
+
+function headChips(group, current) {
+  return `<div class="heads">${GROUPS[group].parts
+    .map((p) => `<button class="head ${p === current ? 'on' : ''}" data-part="${p}">${partName(p)}${PARTS[p].alias ? `<small>${PARTS[p].name}</small>` : ''}</button>`)
+    .join('')}</div>`;
 }
 
 function renderHome() {
-  const front = MUSCLE_IDS.filter((id) => MUSCLES[id].view === 'front');
-  const back = MUSCLE_IDS.filter((id) => MUSCLES[id].view === 'back');
+  const front = GROUP_IDS.filter((id) => GROUPS[id].view === 'front');
+  const back = GROUP_IDS.filter((id) => GROUPS[id].view === 'back');
   panelBody.innerHTML = `
     <div class="intro">
       <p class="eyebrow">Muscle explorer</p>
       <h1>What do you want to train?</h1>
-      <p class="muted">Tap a muscle on the 3D body or pick one below to see exercises with animated demos.</p>
+      <p class="muted">Tap any muscle on the 3D body. Every head is separate, so you can tap the long head of the biceps or the lateral head of the triceps on their own.</p>
     </div>
     <h3>Front</h3><div class="chips">${front.map(chip).join('')}</div>
-    <h3>Back</h3><div class="chips">${back.map(chip).join('')}</div>`;
+    <h3>Back</h3><div class="chips">${back.map(chip).join('')}</div>
+    <p class="credit">Anatomy model: <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank" rel="noopener">BodyParts3D</a>, © The Database Center for Life Science, licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Simplified and rigged for animation.</p>`;
 }
 
-function renderMuscle(id) {
-  const m = MUSCLES[id];
+function renderGroup(id) {
+  const m = GROUPS[id];
   const list = exercisesFor(id);
   panelBody.innerHTML = `
     <button class="back" data-go="#">${backIcon} All muscles</button>
     <p class="eyebrow">${m.latin}</p>
     <h1>${m.name}</h1>
     <p class="muted">${m.desc}</p>
+    <h3>${m.parts.length > 1 ? `${m.parts.length} parts. Tap one to focus on it` : 'Muscle'}</h3>
+    ${headChips(id, null)}
     <h3>${list.length} exercises</h3>
-    <div class="ex-list">
-      ${list
-        .map(
-          ({ ex, role }) => `
-        <button class="ex-card" data-go="#e/${ex.id}">
-          <span class="ex-main">
-            <span class="ex-name">${ex.name}</span>
-            <span class="ex-meta">${ex.equipment} · ${ex.level}</span>
-          </span>
-          <span class="tag ${role === 'primary' ? 'prim' : 'sec'}">${role === 'primary' ? 'Primary' : 'Secondary'}</span>
-          ${chev}
-        </button>`,
-        )
-        .join('')}
-    </div>`;
+    ${exList(list)}`;
+}
+
+function renderPart(id) {
+  const p = PARTS[id];
+  const g = PART_GROUP[id];
+  const list = exercisesFor(id);
+  panelBody.innerHTML = `
+    <button class="back" data-go="#m/${g}">${backIcon} ${GROUPS[g].name}</button>
+    <p class="eyebrow">${GROUPS[g].name}${p.alias ? ` · ${p.name}` : ''}</p>
+    <h1>${partName(id)}</h1>
+    <p class="muted">${p.desc}</p>
+    ${GROUPS[g].parts.length > 1 ? `<h3>Other parts of the ${GROUPS[g].name.toLowerCase()}</h3>${headChips(g, id)}` : ''}
+    <h3>${list.length ? `${list.length} exercises` : 'Exercises'}</h3>
+    ${exList(list)}`;
 }
 
 function renderExercise(ex) {
-  const backTo = state.muscle ? `#m/${state.muscle}` : '#';
-  const backLabel = state.muscle ? MUSCLES[state.muscle].name : 'All muscles';
+  const backTo = state.part ? `#p/${state.part}` : state.group ? `#m/${state.group}` : '#';
+  const backLabel = state.part ? partName(state.part) : state.group ? GROUPS[state.group].name : 'All muscles';
   const tags = [
-    ...ex.primary.map((id) => `<button class="tag prim" data-muscle="${id}">${MUSCLES[id].name}</button>`),
-    ...ex.secondary.map((id) => `<button class="tag sec" data-muscle="${id}">${MUSCLES[id].name}</button>`),
+    ...ex.parts.primary.map((id) => `<button class="tag prim" data-part="${id}">${partName(id)}</button>`),
+    ...ex.parts.secondary.map((id) => `<button class="tag sec" data-part="${id}">${partName(id)}</button>`),
   ].join('');
   panelBody.innerHTML = `
     <button class="back" data-go="${backTo}">${backIcon} ${backLabel}</button>
@@ -390,18 +405,14 @@ panelBody.addEventListener('click', (e) => {
     route.fromList = true;
     go(`#m/${m.dataset.muscle}`);
   }
+  const p = e.target.closest('[data-part]');
+  if (p) {
+    route.fromList = true;
+    go(`#p/${p.dataset.part}`);
+  }
 });
 
 // ------------------------------------------------------------------ controls UI
-function setGender(g) {
-  state.gender = g;
-  try {
-    localStorage.setItem('f360-gender', g);
-  } catch {}
-  document.querySelectorAll('#gender button').forEach((b) => b.classList.toggle('on', b.dataset.g === g));
-  buildRig();
-}
-document.querySelectorAll('#gender button').forEach((b) => b.addEventListener('click', () => setGender(b.dataset.g)));
 viewToggle.addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (b) exploreView(b.dataset.view);
@@ -434,7 +445,6 @@ function updateHud(force) {
 const clock = new THREE.Clock();
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  const t = clock.elapsedTime;
 
   if (fly) {
     fly.t += dt / fly.dur;
@@ -450,13 +460,9 @@ function tick() {
       if (state.playing) state.time += dt * state.speed;
       rig.apply(sample(compiled, state.time));
       props?.update();
-      rig.J.chest.scale.setScalar(1);
       updateHud(false);
-    } else {
-      // gentle breathing
-      const b = 1 + Math.sin(t * 1.6) * 0.008;
-      rig.J.chest.scale.set(b, b, b);
     }
+    body.update();
   }
 
   controls.update();
@@ -465,12 +471,18 @@ function tick() {
 }
 
 // ------------------------------------------------------------------ boot
-document.querySelectorAll('#gender button').forEach((b) => b.classList.toggle('on', b.dataset.g === state.gender));
 resize();
-buildRig();
-route();
-window.addEventListener('hashchange', route);
-$('#loading').remove();
 tick();
+buildBody()
+  .then(() => {
+    route.first = true;
+    route();
+    window.addEventListener('hashchange', route);
+    $('#loading').remove();
+  })
+  .catch((err) => {
+    console.error(err);
+    $('#loading').innerHTML = '<p>Couldn’t load the 3D body. Please refresh.</p>';
+  });
 // handy for debugging from the console
-window.f360 = { state, camera, controls, flyTo, go, get rig() { return rig; } };
+window.f360 = { state, renderer, scene, camera, controls, flyTo, go, pickAt: (x, y) => pick({ clientX: x, clientY: y }), get rig() { return rig; }, get body() { return body; } };

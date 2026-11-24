@@ -45,7 +45,8 @@ function barbell() {
   return g;
 }
 
-function bench({ x = 0, z = 0, height = 0.45, length = 1.2, width = 0.32 }) {
+function bench({ x = 0, z = 0, height = 0.45, length = 1.2, width = 0.32, incline = 0 }) {
+  if (incline) return inclineBench({ x, z, height, width, incline });
   const g = new THREE.Group();
   g.position.set(x, 0, z);
   g.add(mesh(new THREE.BoxGeometry(width, 0.08, length), M.pad, [0, height - 0.04, 0]));
@@ -57,6 +58,27 @@ function bench({ x = 0, z = 0, height = 0.45, length = 1.2, width = 0.32 }) {
     const size = along ? [width * 0.8, legH, 0.05] : [0.05, legH, length * 0.8];
     g.add(mesh(new THREE.BoxGeometry(...size), M.iron, pos));
   }
+  return g;
+}
+
+// Seat (toward +z, under the hips) + a backrest rising toward -z at `incline` radians.
+function inclineBench({ x, z, height, width, incline }) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const seatLen = 0.4;
+  g.add(mesh(new THREE.BoxGeometry(width, 0.08, seatLen), M.pad, [0, height - 0.04, seatLen / 2 - 0.08]));
+  const back = new THREE.Group();
+  back.position.set(0, height, -0.08);
+  back.rotation.x = incline;
+  back.add(mesh(new THREE.BoxGeometry(width, 0.08, 0.85), M.pad, [0, -0.04, -0.425]));
+  g.add(back);
+  const legH = height - 0.08;
+  g.add(mesh(new THREE.BoxGeometry(width * 0.8, legH, 0.05), M.iron, [0, legH / 2, 0.2]));
+  // rear strut under the backrest
+  const topY = height + Math.sin(incline) * 0.6 - 0.1;
+  const topZ = -0.08 - Math.cos(incline) * 0.6;
+  g.add(mesh(new THREE.BoxGeometry(0.05, topY, 0.05), M.iron, [0, topY / 2, topZ]));
+  g.add(mesh(new THREE.BoxGeometry(width * 0.8, 0.04, 0.05), M.iron, [0, 0.02, topZ]));
   return g;
 }
 

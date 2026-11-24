@@ -142,3 +142,14 @@ button.tag:hover { filter: brightness(1.2); }
   .seg button { padding: 6px 11px; }
   .hud { gap: 6px; }
 }
+
+/* individual heads */
+.heads { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.head { text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 14px; font-weight: 600; line-height: 1.25; transition: background .15s, border-color .15s; }
+.head small { display: block; font-weight: 400; font-size: 12px; color: var(--muted, #9aa3b2); margin-top: 2px; }
+.head:hover { background: var(--card-hover); }
+.head.on { border-color: var(--volt); background: rgba(212, 255, 58, .08); color: var(--volt); }
+.muted.small { font-size: 13px; }
+.badge { font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted, #9aa3b2); }
+.credit { margin-top: 28px; font-size: 11px; color: var(--muted, #9aa3b2); opacity: .8; }
+.credit a { color: inherit; }
